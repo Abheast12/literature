@@ -7,16 +7,18 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Slider } from "@/components/ui/slider"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { X, Clock, Users } from 'lucide-react'
+import { X, Clock, Users } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { connectSocket, disconnectSocket } from "@/lib/socket"
+import { connectSocket } from "@/lib/socket"
+import { Socket } from "socket.io-client"
 
-interface Player {
-  id: string
-  name: string
-  team: "A" | "B"
-  isAdmin: boolean
-}
+// Mock player data for initial development
+const MOCK_PLAYERS = [
+  { id: "1", name: "Player 1", team: "A" },
+  { id: "2", name: "Player 2", team: "B" },
+  { id: "3", name: "Player 3", team: "A" },
+  { id: "4", name: "Player 4", team: "B" },
+]
 
 export default function LobbyPage() {
   const router = useRouter()
@@ -26,12 +28,10 @@ export default function LobbyPage() {
 
   const lobbyCode = params.code as string
   const isAdmin = searchParams.get("admin") === "true"
-
-    const [players, setPlayers] = useState<Player[]>([])
-
+  const [players, setPlayers] = useState(MOCK_PLAYERS)
   const [turnTime, setTurnTime] = useState(30)
   const [username, setUsername] = useState("")
-  const [socket, setSocket] = useState<ReturnType<typeof connectSocket> | null>(null)
+  const [socket, setSocket] = useState<Socket | null>(null)
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
@@ -42,119 +42,121 @@ export default function LobbyPage() {
     } else {
       // Redirect to landing page if no username
       router.push("/")
-      return
+      return // Exit early if no username
     }
 
-    // Connect to socket server
-    const socketInstance = connectSocket(storedUsername, lobbyCode, isAdmin)
-    setSocket(socketInstance)
+    // Connect to the Socket.io server
+    try {
+      const socketInstance = connectSocket(storedUsername, lobbyCode, isAdmin)
+      setSocket(socketInstance)
 
-    // Set up socket event listeners
-    socketInstance.on("connect", () => {
-      console.log("Connected to socket server")
-      setConnected(true)
-      toast({
-        title: "Connected to lobby",
-        description: `You've joined lobby ${lobbyCode}`,
+      socketInstance.on("connect", () => {
+        setConnected(true)
+        toast({
+          title: "Connected to lobby",
+          description: `You've joined lobby ${lobbyCode}`,
+        })
       })
-    })
 
-    socketInstance.on("connect_error", (error) => {
-      console.error("Socket connection error:", error)
+      socketInstance.on("player_joined", (data) => {
+        console.log("Players in lobby:", data.players)
+        setPlayers(data.players)
+      })
+
+      socketInstance.on("player_left", (data) => {
+        setPlayers(data.players)
+      })
+
+      socketInstance.on("settings_updated", (data) => {
+        setTurnTime(data.settings.turnTime)
+      })
+
+      socketInstance.on("admin_assigned", () => {
+        toast({
+          title: "You are now the admin",
+          description: "The previous admin left the lobby",
+        })
+      })
+
+      socketInstance.on("kicked", () => {
+        toast({
+          title: "You were kicked",
+          description: "You have been removed from the lobby",
+          variant: "destructive",
+        })
+        router.push("/")
+      })
+
+      socketInstance.on("error", (data) => {
+        toast({
+          title: "Error",
+          description: data.message,
+          variant: "destructive",
+        })
+      })
+    } catch (error) {
+      console.error("Error connecting to socket:", error)
       toast({
         title: "Connection error",
-        description: "Failed to connect to the game server",
+        description: "Could not connect to the game server",
         variant: "destructive",
       })
-    })
+    }
 
-    socketInstance.on("player_joined", (data) => {
-      console.log("Players in lobby:", data.players)
-      setPlayers(data.players)
-      if (isAdmin) {
-        setTurnTime(data.settings.turnTime)
-      }
-    })
-
-    socketInstance.on("player_left", (data) => {
-      console.log("Player left, updated players:", data.players)
-      setPlayers(data.players)
-    })
-
-    socketInstance.on("player_updated", (data) => {
-      console.log("Player updated, updated players:", data.players)
-      setPlayers(data.players)
-    })
-
-    socketInstance.on("settings_updated", (data) => {
-      console.log("Settings updated:", data.settings)
-      setTurnTime(data.settings.turnTime)
-    })
-
-    socketInstance.on("kicked", () => {
-      toast({
-        title: "You were kicked",
-        description: "You have been removed from the lobby",
-        variant: "destructive",
-      })
-      router.push("/")
-    })
-
-    socketInstance.on("game_started", () => {
-      router.push(`/game/${lobbyCode}`)
-    })
-
-    socketInstance.on("error", (data) => {
-      toast({
-        title: "Error",
-        description: data.message,
-        variant: "destructive",
-      })
-    })
-
-    // Clean up on unmount
     return () => {
-      if (socketInstance) {
-        socketInstance.off("connect")
-        socketInstance.off("connect_error")
-        socketInstance.off("player_joined")
-        socketInstance.off("player_left")
-        socketInstance.off("player_updated")
-        socketInstance.off("settings_updated")
-        socketInstance.off("kicked")
-        socketInstance.off("game_started")
-        socketInstance.off("error")
-        disconnectSocket()
+      // Clean up socket connection
+      if (socket) {
+        socket.disconnect()
       }
     }
   }, [lobbyCode, router, toast, isAdmin])
 
-  const handleStartGame = (): void => {
-    if (socket) {
-      socket.emit("start_game", { lobbyCode })
+  const handleStartGame = () => {
+    if (players.length !== 6) {
+      toast({
+        title: "Cannot start game",
+        description: "You need exactly 6 players to start the game",
+        variant: "destructive",
+      })
+      return
     }
-  }
 
-  const handleKickPlayer = (playerId: string): void => {
-    if (socket) {
-      socket.emit("kick_player", { lobbyCode, playerId })
-    }
-  }
+    if (socket && socket.connected) {
+      // Emit the start_game event to the server
+      socket.emit("start_game", { lobbyCode, turnTime })
 
-  const handleToggleTeam = (playerId: string): void => {
-    if (socket) {
-      socket.emit("toggle_team", { lobbyCode, playerId })
-    }
-  }
-
-  const handleUpdateTurnTime = (value: number) => {
-    setTurnTime(value)
-    if (socket) {
-      socket.emit("update_settings", { 
-        lobbyCode, 
-        settings: { turnTime: value } 
+      // Navigate to the game page
+      router.push(`/game/${lobbyCode}`)
+    } else {
+      toast({
+        title: "Connection error",
+        description: "Not connected to the game server",
+        variant: "destructive",
       })
     }
+  }
+
+  const handleKickPlayer = (playerId: string) => {
+    // In a real implementation, we would emit a socket event to kick the player
+    // socket.emit("kick_player", { lobbyCode, playerId })
+
+    // For now, we'll just remove the player from our local state
+    setPlayers(players.filter((player) => player.id !== playerId))
+
+    toast({
+      title: "Player kicked",
+      description: "The player has been removed from the lobby",
+    })
+  }
+
+  const handleToggleTeam = (playerId: string) => {
+    // In a real implementation, we would emit a socket event to change the player's team
+    // socket.emit("toggle_team", { lobbyCode, playerId })
+
+    // For now, we'll just update our local state
+    setPlayers(
+      players.map((player) => (player.id === playerId ? { ...player, team: player.team === "A" ? "B" : "A" } : player)),
+    )
   }
 
   return (
@@ -183,7 +185,6 @@ export default function LobbyPage() {
                       Team {player.team}
                     </Badge>
                     <span>{player.name}</span>
-                    {player.isAdmin && <span className="ml-2 text-xs text-muted-foreground">(Admin)</span>}
                   </div>
                   {isAdmin && player.name !== username && (
                     <div className="flex items-center space-x-2">
@@ -225,7 +226,7 @@ export default function LobbyPage() {
                   max={60}
                   step={5}
                   value={[turnTime]}
-                  onValueChange={(value) => handleUpdateTurnTime(value[0])}
+                  onValueChange={(value) => setTurnTime(value[0])}
                 />
               </div>
             </div>
@@ -236,11 +237,7 @@ export default function LobbyPage() {
             Leave Lobby
           </Button>
           {isAdmin && (
-            <Button 
-              onClick={handleStartGame} 
-              // For testing: allow starting with any number of players
-              // disabled={players.length !== 6}
-            >
+            <Button onClick={handleStartGame} disabled={players.length !== 6}>
               Start Game
             </Button>
           )}

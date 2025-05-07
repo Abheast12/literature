@@ -111,10 +111,57 @@ export const dealCards = (players: Player[], cards: GameCard[]): Player[] => {
   }))
 }
 
-// Get all cards in a specific set
+// Add a helper function to get cards in a set
 export const getCardsInSet = (setName: string): GameCard[] => {
-  const allCards = createDeck()
-  return allCards.filter(card => card.set === setName)
+  // This is a simplified version - in a real implementation, you would have a complete deck definition
+  const suits = ["hearts", "diamonds", "clubs", "spades"]
+  const cards: GameCard[] = []
+
+  if (setName.startsWith("low-")) {
+    const suit = setName.split("-")[1]
+    for (let i = 2; i <= 7; i++) {
+      cards.push({
+        id: `${i}-${suit}`,
+        value: i.toString() as CardValue,
+        suit: suit as CardSuit,
+        set: setName,
+      })
+    }
+  } else if (setName.startsWith("high-")) {
+    const suit = setName.split("-")[1]
+    const values = ["9", "10", "J", "Q", "K", "A"]
+    values.forEach((value) => {
+      cards.push({
+        id: `${value}-${suit}`,
+        value: value as CardValue,
+        suit: suit as CardSuit,
+        set: setName,
+      })
+    })
+  } else if (setName === "eights-jokers") {
+    suits.forEach((suit) => {
+      cards.push({
+        id: `8-${suit}`,
+        value: "8" as CardValue,
+        suit: suit as CardSuit,
+        set: setName,
+      })
+    })
+    cards.push({
+      id: "joker-red",
+      value: "JOKER" as CardValue,
+      suit: "red" as CardSuit,
+      set: setName,
+    })
+    cards.push({
+      id: "joker-black",
+      value: "JOKER" as CardValue,
+      suit: "black" as CardSuit,
+      set: setName,
+    })
+  }
+
+  return cards
 }
 
 // Check if a player can ask for a specific card

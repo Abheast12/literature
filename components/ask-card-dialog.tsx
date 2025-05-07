@@ -6,25 +6,36 @@ import { Button } from "@/components/ui/button"
 import { PlayingCard } from "./playing-card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 
+interface Card {
+  id: string
+  value: string
+  suit: string
+  set: string
+}
+
 interface AskCardDialogProps {
   open: boolean
   onClose: () => void
-  player: any
+  player: {
+    name: string;
+    id: string;
+  };
   currentPlayer: any
   onAsk: (card: any) => void
 }
 
+// Fix the AskCardDialog component to handle both array and number card types
 export function AskCardDialog({ open, onClose, player, currentPlayer, onAsk }: AskCardDialogProps) {
-  const [selectedCard, setSelectedCard] = useState(null)
+  const [selectedCard, setSelectedCard] = useState<Card | null>(null)
 
-  if (!player || !currentPlayer) return null
+  // If player or currentPlayer is null or undefined, or if currentPlayer.cards is not an array, return null
+  if (!player || !currentPlayer || !Array.isArray(currentPlayer.cards)) return null
 
   // Get all sets that the current player has at least one card from
-  const playerSets = new Set(currentPlayer.cards.map((card) => card.set))
+  const playerSets = new Set<string>(currentPlayer.cards.map((card: Card) => card.set))
 
   // Get all cards that the current player can ask for
-  // (cards from sets that the player has at least one card from, but doesn't have the specific card)
-  const askableCards = []
+  const askableCards: Card[] = []
 
   // For each set the player has cards from
   playerSets.forEach((set) => {
@@ -32,17 +43,17 @@ export function AskCardDialog({ open, onClose, player, currentPlayer, onAsk }: A
     const setCards = getCardsInSet(set)
 
     // Filter out cards the player already has
-    const playerCardIds = new Set(currentPlayer.cards.map((card) => card.id))
+    const playerCardIds: Set<string> = new Set(currentPlayer.cards.map((card: Card) => card.id))
     const cardsToAsk = setCards.filter((card) => !playerCardIds.has(card.id))
 
     askableCards.push(...cardsToAsk)
   })
 
   // Helper function to get all cards in a set
-  function getCardsInSet(setName) {
+  function getCardsInSet(setName: string): Card[] {
     // This is a simplified version - in a real implementation, you would have a complete deck definition
-    const suits = ["hearts", "diamonds", "clubs", "spades"]
-    const cards = []
+    const suits: string[] = ["hearts", "diamonds", "clubs", "spades"]
+    const cards: Card[] = []
 
     if (setName.startsWith("low-")) {
       const suit = setName.split("-")[1]
@@ -99,9 +110,9 @@ export function AskCardDialog({ open, onClose, player, currentPlayer, onAsk }: A
         </DialogHeader>
         <ScrollArea className="max-h-[60vh]">
           <div className="grid grid-cols-3 gap-2 p-2">
-            {askableCards.map((card) => (
+            {askableCards.map((card: Card) => (
               <div key={card.id} className="flex justify-center" onClick={() => setSelectedCard(card)}>
-                <PlayingCard card={card} onClick={() => setSelectedCard(card)} />
+              <PlayingCard card={card} onClick={() => setSelectedCard(card)} />
               </div>
             ))}
           </div>

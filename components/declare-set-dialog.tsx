@@ -17,21 +17,51 @@ interface DeclareSetDialogProps {
   onDeclare: (setName: string, declarations: Record<string, string[]>) => void
 }
 
+// Mock function to simulate fetching cards in a set. Replace with actual implementation.
+const getCardsInSet = (setName: string) => {
+  // This is a placeholder. In a real application, you would fetch the cards
+  // belonging to the set from a data source.
+  // For now, let's return some dummy data.
+  const dummyCards = [
+    { id: "card1", set: setName, value: "A", suit: "hearts" },
+    { id: "card2", set: setName, value: "K", suit: "hearts" },
+    { id: "card3", set: setName, value: "Q", suit: "hearts" },
+  ]
+  return dummyCards.filter((card) => card.set === setName)
+}
+
+// Fix the DeclareSetDialog component to handle both array and number card types
 export function DeclareSetDialog({ open, onClose, currentPlayer, teammates, onDeclare }: DeclareSetDialogProps) {
   const [selectedSet, setSelectedSet] = useState("")
   const [declarations, setDeclarations] = useState<Record<string, string[]>>({})
 
-  if (!currentPlayer) return null
+  // If currentPlayer is null or undefined, or if currentPlayer.cards is not an array, return null
+  if (!currentPlayer || !Array.isArray(currentPlayer.cards)) return null
 
   // Get all sets that the current player has at least one card from
-  const playerSets = new Set(currentPlayer.cards.map((card) => card.set))
+  interface Card {
+    id: string;
+    set: string;
+    value: string;
+    suit: string;
+  }
+  
+  const playerSets = new Set<string>((currentPlayer.cards as Card[]).map((card) => card.set))
 
   // Get all cards in the selected set
   const cardsInSet = selectedSet ? getCardsInSet(selectedSet) : []
 
   // Group cards by player
-  const cardsByPlayer = {
-    [currentPlayer.id]: currentPlayer.cards.filter((card) => card.set === selectedSet).map((card) => card.id),
+  // Interface for card grouping by player ID
+  interface CardsByPlayer {
+    [playerId: string]: string[];
+  }
+
+  // Group cards by player
+  const cardsByPlayer: CardsByPlayer = {
+    [currentPlayer.id]: currentPlayer.cards
+      .filter((card: Card) => card.set === selectedSet)
+      .map((card: Card) => card.id),
   }
 
   // Initialize declarations with current player's cards
@@ -42,76 +72,28 @@ export function DeclareSetDialog({ open, onClose, currentPlayer, teammates, onDe
     })
   }
 
-  // Helper function to get all cards in a set
-  function getCardsInSet(setName) {
-    // This is a simplified version - in a real implementation, you would have a complete deck definition
-    const suits = ["hearts", "diamonds", "clubs", "spades"]
-    const cards = []
-
-    if (setName.startsWith("low-")) {
-      const suit = setName.split("-")[1]
-      for (let i = 2; i <= 7; i++) {
-        cards.push({
-          id: `${i}-${suit}`,
-          value: i.toString(),
-          suit,
-          set: setName,
-        })
-      }
-    } else if (setName.startsWith("high-")) {
-      const suit = setName.split("-")[1]
-      const values = ["9", "10", "J", "Q", "K", "A"]
-      values.forEach((value) => {
-        cards.push({
-          id: `${value}-${suit}`,
-          value,
-          suit,
-          set: setName,
-        })
-      })
-    } else if (setName === "eights-jokers") {
-      suits.forEach((suit) => {
-        cards.push({
-          id: `8-${suit}`,
-          value: "8",
-          suit,
-          set: setName,
-        })
-      })
-      cards.push({
-        id: "joker-red",
-        value: "JOKER",
-        suit: "red",
-        set: setName,
-      })
-      cards.push({
-        id: "joker-black",
-        value: "JOKER",
-        suit: "black",
-        set: setName,
-      })
-    }
-
-    return cards
+  // Interface for the declarations state
+  interface Declarations {
+    [playerId: string]: string[];
   }
 
-  const handleCardAssignment = (cardId, playerId) => {
+  const handleCardAssignment = (cardId: string, playerId: string): void => {
     // Remove the card from any player who might have it assigned
-    const updatedDeclarations = { ...declarations }
+    const updatedDeclarations: Declarations = { ...declarations };
 
-    Object.keys(updatedDeclarations).forEach((pid) => {
-      updatedDeclarations[pid] = updatedDeclarations[pid].filter((id) => id !== cardId)
-    })
+    Object.keys(updatedDeclarations).forEach((pid: string) => {
+      updatedDeclarations[pid] = updatedDeclarations[pid].filter((id: string) => id !== cardId);
+    });
 
     // Add the card to the selected player
     if (!updatedDeclarations[playerId]) {
-      updatedDeclarations[playerId] = []
+      updatedDeclarations[playerId] = [];
     }
 
-    updatedDeclarations[playerId] = [...updatedDeclarations[playerId], cardId]
+    updatedDeclarations[playerId] = [...updatedDeclarations[playerId], cardId];
 
-    setDeclarations(updatedDeclarations)
-  }
+    setDeclarations(updatedDeclarations);
+  };
 
   const handleDeclare = () => {
     onDeclare(selectedSet, declarations)
@@ -160,7 +142,7 @@ export function DeclareSetDialog({ open, onClose, currentPlayer, teammates, onDe
                   <div className="grid grid-cols-3 gap-2 p-2">
                     {cardsInSet.map((card) => {
                       const isAssigned = declarations[currentPlayer.id]?.includes(card.id)
-                      const isOwnedByPlayer = currentPlayer.cards.some((c) => c.id === card.id)
+                        const isOwnedByPlayer: boolean = (currentPlayer.cards as Card[]).some((c: Card): boolean => c.id === card.id)
 
                       return (
                         <div

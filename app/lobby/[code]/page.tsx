@@ -12,13 +12,12 @@ import { useToast } from "@/hooks/use-toast"
 import { connectSocket } from "@/lib/socket"
 import { Socket } from "socket.io-client"
 
-// Mock player data for initial development
-const MOCK_PLAYERS = [
-  { id: "1", name: "Player 1", team: "A" },
-  { id: "2", name: "Player 2", team: "B" },
-  { id: "3", name: "Player 3", team: "A" },
-  { id: "4", name: "Player 4", team: "B" },
-]
+interface Player {
+  id: string
+  name: string
+  team: string
+  isAdmin?: boolean
+}
 
 export default function LobbyPage() {
   const router = useRouter()
@@ -28,7 +27,7 @@ export default function LobbyPage() {
 
   const lobbyCode = params.code as string
   const isAdmin = searchParams.get("admin") === "true"
-  const [players, setPlayers] = useState(MOCK_PLAYERS)
+  const [players, setPlayers] = useState<Player[]>([])
   const [turnTime, setTurnTime] = useState(30)
   const [username, setUsername] = useState("")
   const [socket, setSocket] = useState<Socket | null>(null)
@@ -58,12 +57,20 @@ export default function LobbyPage() {
         })
       })
 
+      socketInstance.on("game_starting", () => {
+        // Navigate to the game page for non-admin players
+        if (!isAdmin) {
+          router.push(`/game/${lobbyCode}`)
+        }
+      })
+
       socketInstance.on("player_joined", (data) => {
         console.log("Players in lobby:", data.players)
         setPlayers(data.players)
       })
 
       socketInstance.on("player_left", (data) => {
+        console.log("Player left, remaining players:", data.players)
         setPlayers(data.players)
       })
 
@@ -93,6 +100,11 @@ export default function LobbyPage() {
           description: data.message,
           variant: "destructive",
         })
+      })
+
+      socketInstance.on("player_updated", (data) => {
+        console.log("Players updated:", data.players)
+        setPlayers(data.players)
       })
     } catch (error) {
       console.error("Error connecting to socket:", error)
@@ -137,27 +149,18 @@ export default function LobbyPage() {
   }
 
   const handleKickPlayer = (playerId: string) => {
-    // In a real implementation, we would emit a socket event to kick the player
-    // socket.emit("kick_player", { lobbyCode, playerId })
-
-    // For now, we'll just remove the player from our local state
-    setPlayers(players.filter((player) => player.id !== playerId))
-
-    toast({
-      title: "Player kicked",
-      description: "The player has been removed from the lobby",
-    })
+    if (socket && socket.connected) {
+      socket.emit("kick_player", { lobbyCode, playerId })
+    }
   }
 
   const handleToggleTeam = (playerId: string) => {
-    // In a real implementation, we would emit a socket event to change the player's team
-    // socket.emit("toggle_team", { lobbyCode, playerId })
-
-    // For now, we'll just update our local state
-    setPlayers(
-      players.map((player) => (player.id === playerId ? { ...player, team: player.team === "A" ? "B" : "A" } : player)),
-    )
+    if (socket && socket.connected) {
+      socket.emit("toggle_team", { lobbyCode, playerId })
+    }
   }
+
+  const currentPlayer = players.find((p) => p.id === username)
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 p-4">
@@ -185,6 +188,7 @@ export default function LobbyPage() {
                       Team {player.team}
                     </Badge>
                     <span>{player.name}</span>
+                    {player.isAdmin && <Badge variant="outline" className="ml-2">Admin</Badge>}
                   </div>
                   {isAdmin && player.name !== username && (
                     <div className="flex items-center space-x-2">
@@ -212,36 +216,36 @@ export default function LobbyPage() {
 
           {isAdmin && (
             <div className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="turn-time" className="flex items-center">
-                    <Clock className="mr-2 h-5 w-5" />
-                    Turn Time Limit
-                  </Label>
-                  <span>{turnTime} seconds</span>
-                </div>
+              <div>
+                <Label htmlFor="turn-time" className="flex items-center">
+                  <Clock className="mr-2 h-4 w-4" />
+                  Turn Time: {turnTime} seconds
+                </Label>
                 <Slider
                   id="turn-time"
-                  min={10}
+                  min={15}
                   max={60}
                   step={5}
                   value={[turnTime]}
-                  onValueChange={(value) => setTurnTime(value[0])}
+                  onValueChange={(value) => {
+                    setTurnTime(value[0])
+                    if (socket && socket.connected) {
+                      socket.emit("update_settings", { lobbyCode, settings: { turnTime: value[0] } })
+                    }
+                  }}
                 />
               </div>
+
+              <Button
+                className="w-full"
+                onClick={handleStartGame}
+                disabled={players.length !== 6 || !connected}
+              >
+                Start Game
+              </Button>
             </div>
           )}
         </CardContent>
-        <CardFooter className="flex justify-between">
-          <Button variant="outline" onClick={() => router.push("/")}>
-            Leave Lobby
-          </Button>
-          {isAdmin && (
-            <Button onClick={handleStartGame} disabled={players.length !== 6}>
-              Start Game
-            </Button>
-          )}
-        </CardFooter>
       </Card>
     </div>
   )

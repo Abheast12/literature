@@ -42,13 +42,14 @@ io.on("connection", (socket) => {
     const lobby = lobbies.get(lobbyCode)
 
     // Check if player already exists in the lobby
-    const existingPlayerIndex = lobby.players.findIndex(p => p.name === username)
+    const existingPlayerIndex = lobby.players.findIndex(p => p.id === socket.id)
     if (existingPlayerIndex !== -1) {
-      // Update the existing player's socket ID
+      // Update the existing player's socket ID and name
       lobby.players[existingPlayerIndex].id = socket.id
+      lobby.players[existingPlayerIndex].name = username
       console.log(`Player ${username} reconnected to lobby ${lobbyCode}`)
     } else {
-      // Add player to lobby
+      // Add new player to lobby
       const player = {
         id: socket.id,
         name: username,
@@ -180,19 +181,14 @@ io.on("connection", (socket) => {
     const lobby = lobbies.get(lobbyCode)
 
     if (lobby && socket.id === lobby.admin) {
-      // For testing: allow starting with fewer players
-      // if (lobby.players.length !== 6) {
-      //   socket.emit("error", {
-      //     message: "Need exactly 6 players to start the game",
-      //   })
-      //   return
-      // }
-
       console.log(`Starting game in lobby ${lobbyCode} with ${lobby.players.length} players`)
 
       // Initialize game state
       const gameState = initializeGame(lobby.players)
       lobby.gameState = gameState
+
+      // Notify all players that the game is starting
+      io.to(lobbyCode).emit("game_starting")
 
       // Send each player their cards
       lobby.players.forEach((player) => {
@@ -208,6 +204,71 @@ io.on("connection", (socket) => {
         io.to(player.id).emit("game_started", playerState)
       })
     }
+  })
+
+  // Handle ask card
+  socket.on("ask_card", ({ lobbyCode, playerId, cardId }) => {
+    const lobby = lobbies.get(lobbyCode)
+    if (!lobby || !lobby.gameState) return
+
+    const askingPlayer = lobby.gameState.players.find(p => p.id === socket.id)
+    const targetPlayer = lobby.gameState.players.find(p => p.id === playerId)
+
+    if (!askingPlayer || !targetPlayer) return
+
+    // Check if it's the asking player's turn
+    if (lobby.gameState.currentTurn !== socket.id) {
+      socket.emit("error", { message: "It's not your turn" })
+      return
+    }
+
+    // Check if the target player has the card
+    const cardIndex = targetPlayer.cards.findIndex(c => c.id === cardId)
+    if (cardIndex === -1) {
+      // Card not found, switch turns
+      lobby.gameState.currentTurn = playerId
+      io.to(lobbyCode).emit("turn_changed", {
+        currentTurn: playerId,
+        players: lobby.gameState.players
+      })
+      return
+    }
+
+    // Transfer the card
+    const card = targetPlayer.cards.splice(cardIndex, 1)[0]
+    askingPlayer.cards.push(card)
+
+    // Update all players with the new card counts and names
+    io.to(lobbyCode).emit("card_counts_updated", {
+      players: lobby.gameState.players.map(p => ({
+        id: p.id,
+        name: p.name,
+        team: p.team,
+        cardCount: p.cards.length
+      }))
+    })
+
+    // Send the specific card to the asking player
+    socket.emit("card_received", { card })
+  })
+
+  // Handle game state request
+  socket.on("request_game_state", ({ lobbyCode }) => {
+    const lobby = lobbies.get(lobbyCode)
+    if (!lobby || !lobby.gameState) return
+
+    const player = lobby.players.find(p => p.id === socket.id)
+    if (!player) return
+
+    const playerState = {
+      ...lobby.gameState,
+      players: lobby.gameState.players.map((p) => ({
+        ...p,
+        cards: p.id === socket.id ? p.cards : p.cards.length,
+      })),
+    }
+
+    socket.emit("game_state", playerState)
   })
 
   // Rest of the socket handlers...

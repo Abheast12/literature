@@ -3,11 +3,17 @@ import { io, type Socket } from "socket.io-client"
 // This is a singleton pattern to ensure we only create one socket connection
 let socket: Socket | null = null
 
+interface SocketAuth {
+  username: string
+  lobbyCode: string
+  isAdmin: boolean
+}
+
 export const getSocket = () => {
   return socket
 }
 
-export const connectSocket = (username: string, lobbyCode: string, isAdmin = false) => {
+export const connectSocket = (username: string, lobbyCode: string, isAdmin = false): Socket => {
   if (!socket) {
     const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001"
     console.log("Connecting to socket server at:", socketUrl)
@@ -28,10 +34,17 @@ export const connectSocket = (username: string, lobbyCode: string, isAdmin = fal
     // Add global disconnect handler
     socket.on("disconnect", (reason) => {
       console.log("Socket disconnected:", reason)
+      // Clear the socket instance on disconnect
+      socket = null
     })
   } else {
-    // Update auth if socket already exists
-    socket.auth = { username, lobbyCode, isAdmin }
+    // If socket exists but auth is different, disconnect and create new connection
+    const currentAuth = socket.auth as SocketAuth
+    if (currentAuth.username !== username || currentAuth.lobbyCode !== lobbyCode || currentAuth.isAdmin !== isAdmin) {
+      socket.disconnect()
+      socket = null
+      return connectSocket(username, lobbyCode, isAdmin)
+    }
 
     // Reconnect if not connected
     if (!socket.connected) {
@@ -45,5 +58,6 @@ export const connectSocket = (username: string, lobbyCode: string, isAdmin = fal
 export const disconnectSocket = () => {
   if (socket) {
     socket.disconnect()
+    socket = null
   }
 }

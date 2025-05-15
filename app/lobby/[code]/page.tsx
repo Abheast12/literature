@@ -9,14 +9,13 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { X, Clock, Users } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { connectSocket } from "@/lib/socket"
-import { Socket } from "socket.io-client"
+import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket"
 
 interface Player {
   id: string
   name: string
-  team: string
-  isAdmin?: boolean
+  team: "A" | "B"
+  isAdmin: boolean
 }
 
 export default function LobbyPage() {
@@ -27,10 +26,10 @@ export default function LobbyPage() {
 
   const lobbyCode = params.code as string
   const isAdmin = searchParams.get("admin") === "true"
+
   const [players, setPlayers] = useState<Player[]>([])
   const [turnTime, setTurnTime] = useState(30)
   const [username, setUsername] = useState("")
-  const [socket, setSocket] = useState<Socket | null>(null)
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
@@ -41,27 +40,20 @@ export default function LobbyPage() {
     } else {
       // Redirect to landing page if no username
       router.push("/")
-      return // Exit early if no username
+      return
     }
 
     // Connect to the Socket.io server
     try {
       const socketInstance = connectSocket(storedUsername, lobbyCode, isAdmin)
-      setSocket(socketInstance)
 
       socketInstance.on("connect", () => {
+        console.log("Connected to lobby socket")
         setConnected(true)
         toast({
           title: "Connected to lobby",
           description: `You've joined lobby ${lobbyCode}`,
         })
-      })
-
-      socketInstance.on("game_starting", () => {
-        // Navigate to the game page for non-admin players
-        if (!isAdmin) {
-          router.push(`/game/${lobbyCode}`)
-        }
       })
 
       socketInstance.on("player_joined", (data) => {
@@ -70,8 +62,22 @@ export default function LobbyPage() {
       })
 
       socketInstance.on("player_left", (data) => {
-        console.log("Player left, remaining players:", data.players)
         setPlayers(data.players)
+
+        if (data.kickedPlayerName) {
+          toast({
+            title: "Player kicked",
+            description: `${data.kickedPlayerName} has been removed from the lobby`,
+          })
+        }
+      })
+
+      socketInstance.on("player_disconnected", (data) => {
+        toast({
+          title: "Player disconnected",
+          description: `${data.playerName} has disconnected`,
+          variant: "destructive",
+        })
       })
 
       socketInstance.on("settings_updated", (data) => {
@@ -83,6 +89,9 @@ export default function LobbyPage() {
           title: "You are now the admin",
           description: "The previous admin left the lobby",
         })
+
+        // Refresh the page to update the admin status
+        router.refresh()
       })
 
       socketInstance.on("kicked", () => {
@@ -102,9 +111,16 @@ export default function LobbyPage() {
         })
       })
 
-      socketInstance.on("player_updated", (data) => {
-        console.log("Players updated:", data.players)
-        setPlayers(data.players)
+      socketInstance.on("game_started", () => {
+        console.log("Game started, navigating to game page")
+        router.push(`/game/${lobbyCode}`)
+      })
+
+      socketInstance.on("game_reset", () => {
+        toast({
+          title: "Game reset",
+          description: "The game has been reset",
+        })
       })
     } catch (error) {
       console.error("Error connecting to socket:", error)
@@ -117,9 +133,7 @@ export default function LobbyPage() {
 
     return () => {
       // Clean up socket connection
-      if (socket) {
-        socket.disconnect()
-      }
+      disconnectSocket()
     }
   }, [lobbyCode, router, toast, isAdmin])
 
@@ -133,12 +147,11 @@ export default function LobbyPage() {
       return
     }
 
+    const socket = getSocket()
     if (socket && socket.connected) {
       // Emit the start_game event to the server
       socket.emit("start_game", { lobbyCode, turnTime })
-
-      // Navigate to the game page
-      router.push(`/game/${lobbyCode}`)
+      console.log("Emitted start_game event")
     } else {
       toast({
         title: "Connection error",
@@ -149,18 +162,30 @@ export default function LobbyPage() {
   }
 
   const handleKickPlayer = (playerId: string) => {
+    const socket = getSocket()
     if (socket && socket.connected) {
       socket.emit("kick_player", { lobbyCode, playerId })
+    } else {
+      toast({
+        title: "Connection error",
+        description: "Not connected to the game server",
+        variant: "destructive",
+      })
     }
   }
 
   const handleToggleTeam = (playerId: string) => {
+    const socket = getSocket()
     if (socket && socket.connected) {
       socket.emit("toggle_team", { lobbyCode, playerId })
+    } else {
+      toast({
+        title: "Connection error",
+        description: "Not connected to the game server",
+        variant: "destructive",
+      })
     }
   }
-
-  const currentPlayer = players.find((p) => p.id === username)
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 p-4">
@@ -187,8 +212,9 @@ export default function LobbyPage() {
                     <Badge variant={player.team === "A" ? "default" : "secondary"} className="mr-2">
                       Team {player.team}
                     </Badge>
-                    <span>{player.name}</span>
-                    {player.isAdmin && <Badge variant="outline" className="ml-2">Admin</Badge>}
+                    <span>
+                      {player.name} {player.name === username && "(You)"}
+                    </span>
                   </div>
                   {isAdmin && player.name !== username && (
                     <div className="flex items-center space-x-2">
@@ -216,36 +242,36 @@ export default function LobbyPage() {
 
           {isAdmin && (
             <div className="space-y-4">
-              <div>
-                <Label htmlFor="turn-time" className="flex items-center">
-                  <Clock className="mr-2 h-4 w-4" />
-                  Turn Time: {turnTime} seconds
-                </Label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="turn-time" className="flex items-center">
+                    <Clock className="mr-2 h-5 w-5" />
+                    Turn Time Limit
+                  </Label>
+                  <span>{turnTime} seconds</span>
+                </div>
                 <Slider
                   id="turn-time"
-                  min={15}
+                  min={10}
                   max={60}
                   step={5}
                   value={[turnTime]}
-                  onValueChange={(value) => {
-                    setTurnTime(value[0])
-                    if (socket && socket.connected) {
-                      socket.emit("update_settings", { lobbyCode, settings: { turnTime: value[0] } })
-                    }
-                  }}
+                  onValueChange={(value) => setTurnTime(value[0])}
                 />
               </div>
-
-              <Button
-                className="w-full"
-                onClick={handleStartGame}
-                disabled={players.length !== 6 || !connected}
-              >
-                Start Game
-              </Button>
             </div>
           )}
         </CardContent>
+        <CardFooter className="flex justify-between">
+          <Button variant="outline" onClick={() => router.push("/")}>
+            Leave Lobby
+          </Button>
+          {isAdmin && (
+            <Button onClick={handleStartGame} disabled={players.length !== 6}>
+              Start Game
+            </Button>
+          )}
+        </CardFooter>
       </Card>
     </div>
   )

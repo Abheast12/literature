@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { PlayingCard } from "./playing-card"
+import { getCardsInSet } from "@/lib/game-utils"
 
 interface DeclareSetDialogProps {
   open: boolean
@@ -15,19 +16,6 @@ interface DeclareSetDialogProps {
   currentPlayer: any
   teammates: any[]
   onDeclare: (setName: string, declarations: Record<string, string[]>) => void
-}
-
-// Mock function to simulate fetching cards in a set. Replace with actual implementation.
-const getCardsInSet = (setName: string) => {
-  // This is a placeholder. In a real application, you would fetch the cards
-  // belonging to the set from a data source.
-  // For now, let's return some dummy data.
-  const dummyCards = [
-    { id: "card1", set: setName, value: "A", suit: "hearts" },
-    { id: "card2", set: setName, value: "K", suit: "hearts" },
-    { id: "card3", set: setName, value: "Q", suit: "hearts" },
-  ]
-  return dummyCards.filter((card) => card.set === setName)
 }
 
 // Fix the DeclareSetDialog component to handle both array and number card types

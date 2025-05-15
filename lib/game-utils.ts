@@ -29,6 +29,7 @@ export interface GameState {
   declaredSets: DeclaredSet[]
   gameOver: boolean
   winningTeam: Team | null
+  turnOrder: string[]
 }
 
 // Create a full deck of cards for the Literature game
@@ -113,31 +114,32 @@ export const dealCards = (players: Player[], cards: GameCard[]): Player[] => {
 
 // Add a helper function to get cards in a set
 export const getCardsInSet = (setName: string): GameCard[] => {
-  // This is a simplified version - in a real implementation, you would have a complete deck definition
-  const suits = ["hearts", "diamonds", "clubs", "spades"]
-  const cards: GameCard[] = []
+  const suits = ["hearts", "diamonds", "clubs", "spades"];
+  const cards: GameCard[] = [];
 
   if (setName.startsWith("low-")) {
-    const suit = setName.split("-")[1]
+    // e.g., setName = "low-hearts"
+    const suit = setName.split("-")[1];
     for (let i = 2; i <= 7; i++) {
       cards.push({
         id: `${i}-${suit}`,
         value: i.toString() as CardValue,
         suit: suit as CardSuit,
         set: setName,
-      })
+      });
     }
   } else if (setName.startsWith("high-")) {
-    const suit = setName.split("-")[1]
-    const values = ["9", "10", "J", "Q", "K", "A"]
+    // e.g., setName = "high-hearts"
+    const suit = setName.split("-")[1];
+    const values = ["9", "10", "J", "Q", "K", "A"];
     values.forEach((value) => {
       cards.push({
         id: `${value}-${suit}`,
         value: value as CardValue,
         suit: suit as CardSuit,
         set: setName,
-      })
-    })
+      });
+    });
   } else if (setName === "eights-jokers") {
     suits.forEach((suit) => {
       cards.push({
@@ -145,23 +147,23 @@ export const getCardsInSet = (setName: string): GameCard[] => {
         value: "8" as CardValue,
         suit: suit as CardSuit,
         set: setName,
-      })
-    })
+      });
+    });
     cards.push({
       id: "joker-red",
       value: "JOKER" as CardValue,
       suit: "red" as CardSuit,
       set: setName,
-    })
+    });
     cards.push({
       id: "joker-black",
       value: "JOKER" as CardValue,
       suit: "black" as CardSuit,
       set: setName,
-    })
+    });
   }
 
-  return cards
+  return cards;
 }
 
 // Check if a player can ask for a specific card
@@ -215,4 +217,39 @@ export const validateDeclaration = (
   }
   
   return true
+}
+
+function initializeGame(players: Player[]) {
+  const deck = createDeck()
+  const shuffledDeck = shuffleArray(deck)
+  const cardsPerPlayer = Math.floor(shuffledDeck.length / players.length)
+  
+  // Create a fixed turn order
+  const turnOrder = [...players].map(p => p.id)
+  
+  const gameStatePlayers = players.map((player, index) => ({
+    id: player.id,
+    name: player.name,
+    team: player.team,
+    cards: shuffledDeck.slice(index * cardsPerPlayer, (index + 1) * cardsPerPlayer),
+  }))
+
+  // Randomly select a player to start
+  const startingPlayerIndex = Math.floor(Math.random() * players.length)
+
+  return {
+    players: gameStatePlayers,
+    currentTurn: players[startingPlayerIndex].id,
+    turnOrder: turnOrder,
+    declaredSets: [],
+    gameOver: false,
+    winningTeam: null,
+  }
+}
+
+function advanceTurn(gameState: GameState) {
+  const currentTurnIndex = gameState.turnOrder.indexOf(gameState.currentTurn)
+  const nextTurnIndex = (currentTurnIndex + 1) % gameState.turnOrder.length
+  gameState.currentTurn = gameState.turnOrder[nextTurnIndex]
+  return gameState.currentTurn
 }

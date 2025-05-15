@@ -10,7 +10,6 @@ import { DeclareSetDialog } from "@/components/declare-set-dialog"
 import { AskCardDialog } from "@/components/ask-card-dialog"
 import { GameOverDialog } from "@/components/game-over-dialog"
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket"
-import { createDeck, shuffleArray } from "@/lib/game-utils"
 
 // Game state types
 type CardValue = "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "J" | "Q" | "K" | "A" | "JOKER"
@@ -43,11 +42,6 @@ interface GameState {
   declaredSets: DeclaredSet[]
   gameOver: boolean
   winningTeam: Team | null
-  seatingOrder: string[]
-}
-
-function rotateArray<T>(arr: T[], startIdx: number): T[] {
-  return [...arr.slice(startIdx), ...arr.slice(0, startIdx)];
 }
 
 export default function GamePage() {
@@ -65,217 +59,132 @@ export default function GamePage() {
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [username, setUsername] = useState("")
   const [currentPlayerId, setCurrentPlayerId] = useState("")
+  const [isLoading, setIsLoading] = useState(true)
 
-  // Function to force start the game (for debugging purposes)
-  const forceStartGame = () => {
-    // Connect to socket server
-    try {
-      const socketInstance = connectSocket(username, lobbyCode)
-
-      socketInstance.on("connect", () => {
-        console.log("Connected to socket server in game")
-        setSocketConnected(true)
-        setConnectionError(null)
-
-        // Let the server know we're in the game page
-        socketInstance.emit("join_game", { lobbyCode })
-
-        // If we're already in the game page but haven't received game state,
-        // request it from the server
-        if (!gameState) {
-          socketInstance.emit("request_game_state", { lobbyCode })
-        }
-      })
-
-      socketInstance.on("connect_error", (err) => {
-        console.error("Socket connection error:", err)
-        setConnectionError(`Connection error: ${err.message}`)
-      })
-
-      // Add handler for game state request response
-      socketInstance.on("game_state", (data) => {
-        console.log("Game state received:", data)
-        const currentPlayer = data.players.find((p: Player) => p.name === username)
-        if (currentPlayer) {
-          setCurrentPlayerId(currentPlayer.id)
-          setGameState(data)
-        }
-      })
-
-      socketInstance.on("game_started", (data) => {
-        console.log("Game started event received:", data)
-
-        // Find the current player's ID based on the username
-        const currentPlayer = data.players.find((p: Player) => p.name === username)
-
-        if (currentPlayer) {
-          setCurrentPlayerId(currentPlayer.id)
-          console.log("Current player ID:", currentPlayer.id)
-
-          // Set the game state with the received data
-          setGameState(data)
-        } else {
-          console.error("Could not find current player in game data")
-        }
-      })
-
-      socketInstance.on("card_received", (data) => {
-        console.log("Card received:", data)
-
-        setGameState((prev) => {
-          if (!prev) return prev
-
-          // Add the card to the current player's hand
-          const updatedPlayers = prev.players.map((player) => {
-            if (player.id === currentPlayerId && Array.isArray(player.cards)) {
-              return {
-                ...player,
-                cards: [...player.cards, data.card],
-              }
-            }
-            return player
-          })
-
-          return {
-            ...prev,
-            players: updatedPlayers,
-          }
-        })
-
-        toast({
-          title: "Card found!",
-          description: `You got the card from ${data.fromPlayer}`,
-        })
-      })
-
-      socketInstance.on("card_given", (data) => {
-        console.log("Card given:", data)
-
-        setGameState((prev) => {
-          if (!prev) return prev
-
-          // Remove the card from the current player's hand
-          const updatedPlayers = prev.players.map((player) => {
-            if (player.id === currentPlayerId && Array.isArray(player.cards)) {
-              return {
-                ...player,
-                cards: player.cards.filter((card) => card.id !== data.cardId),
-              }
-            }
-            return player
-          })
-
-          return {
-            ...prev,
-            players: updatedPlayers,
-          }
-        })
-
-        toast({
-          title: "Card given",
-          description: `You gave a card to ${data.toPlayer}`,
-        })
-      })
-
-      socketInstance.on("card_counts_updated", (data) => {
-        console.log("Card counts updated:", data)
-
-        setGameState((prev) => {
-          if (!prev) return prev;
-          // Replace the full players array with the server's data
-          return {
-            ...prev,
-            players: data.players.map((p: any) => ({
-              ...p,
-              cards: p.id === currentPlayerId ? prev.players.find(pl => pl.id === p.id)?.cards : p.cardCount
-            }))
-          };
-        });
-      })
-
-      socketInstance.on("turn_changed", (data) => {
-        console.log("Turn changed:", data)
-
-        setGameState((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            currentTurn: data.currentTurn,
-            players: data.players || prev.players // use server's player list if provided
-          };
-        });
-
-        toast({
-          title: "Turn changed",
-          description: `It's now ${gameState?.players.find((p) => p.id === data.currentTurn)?.name}'s turn`,
-        })
-      })
-
-      socketInstance.on("set_declared", (data) => {
-        console.log("Set declared:", data)
-
-        // Update the game state with the new declared set
-        setGameState((prev) => {
-          if (!prev) return prev
-
-          // Update card counts for all players
-          const updatedPlayers = prev.players.map((player) => {
-            if (player.id !== currentPlayerId) {
-              const updatedCount = data.players.find((p: { id: string, cardCount: number }) => p.id === player.id)?.cardCount || 0
-              return {
-                ...player,
-                cards: updatedCount,
-              }
-            } else if (Array.isArray(player.cards)) {
-              // Remove cards from the declared set from current player's hand
-              return {
-                ...player,
-                cards: player.cards.filter((card) => card.set !== data.setName),
-              }
-            }
-            return player
-          })
-
-          return {
-            ...prev,
-            players: updatedPlayers,
-            declaredSets: data.declaredSets,
-            currentTurn: data.currentTurn,
-          }
-        })
-
-        toast({
-          title: data.isValid ? "Declaration successful!" : "Declaration failed!",
-          description: data.isValid
-            ? `Team ${data.team} has won the ${data.setName} set!`
-            : `The declaration was incorrect. Team ${data.team} gets the ${data.setName} set.`,
-          variant: data.isValid ? "default" : "destructive",
-        })
-      })
-
-      socketInstance.on("game_over", (data) => {
-        console.log("Game over:", data)
-
-        setGameState((prev) => {
-          if (!prev) return prev
-
-          return {
-            ...prev,
-            gameOver: true,
-            winningTeam: data.winningTeam,
-            declaredSets: data.declaredSets,
-          }
-        })
-
-        setGameOverDialogOpen(true)
-      })
-    } catch (error) {
-      console.error("Error setting up socket:", error)
-    }
+ // Fix how current player ID is determined
+useEffect(() => {
+  // Get username from localStorage
+  const storedUsername = localStorage.getItem("username")
+  if (storedUsername) {
+    setUsername(storedUsername)
+  } else {
+    // Redirect to landing page if no username
+    router.push("/")
   }
+  
+  // Connect to socket server
+  try {
+    const socketInstance = connectSocket(storedUsername || "", lobbyCode)
+    
+    // Other socket event handlers...
+    socketInstance.on("turn_changed", (data) => {
+      console.log("Turn changed:", data)
+  
+      setGameState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          currentTurn: data.currentTurn,
+        };
+      });
+  
+      const newTurnPlayerName = gameState?.players.find((p) => p.id === data.currentTurn)?.name || "another player";
+      
+      toast({
+        title: data.success === false ? "Card not found" : "Turn changed",
+        description: data.success === false 
+          ? `${data.fromPlayer} asked ${data.toPlayer} for a card but it wasn't found. It's now ${newTurnPlayerName}'s turn.`
+          : `It's now ${newTurnPlayerName}'s turn`,
+      })
+    })
+  
+    socketInstance.on("card_received", (data) => {
+      console.log("Card received:", data)
+  
+      setGameState((prev) => {
+        if (!prev) return prev
+  
+        // Add the card to the current player's hand
+        const updatedPlayers = prev.players.map((player) => {
+          if (player.id === currentPlayerId && Array.isArray(player.cards)) {
+            return {
+              ...player,
+              cards: [...player.cards, data.card],
+            }
+          }
+          return player
+        })
+  
+        return {
+          ...prev,
+          players: updatedPlayers,
+        }
+      })
+  
+      toast({
+        title: "Card found!",
+        description: `You got a card from ${data.fromPlayer}`,
+      })
+    })
+  
+    socketInstance.on("card_given", (data) => {
+      console.log("Card given:", data)
+  
+      setGameState((prev) => {
+        if (!prev) return prev
+  
+        // Remove the card from the current player's hand
+        const updatedPlayers = prev.players.map((player) => {
+          if (player.id === currentPlayerId && Array.isArray(player.cards)) {
+            return {
+              ...player,
+              cards: player.cards.filter((card) => card.id !== data.cardId),
+            }
+          }
+          return player
+        })
+  
+        return {
+          ...prev,
+          players: updatedPlayers,
+        }
+      })
+  
+      toast({
+        title: "Card given",
+        description: `You gave a card to ${data.toPlayer}`,
+      })
+    })
+    
+    
+    socketInstance.on("game_state", (data) => {
+      console.log("Game state received:", data)
+      // Find current player by NAME, not by ID
+      const currentPlayer = data.players.find((p: Player) => p.name === storedUsername)
+      if (currentPlayer) {
+        setCurrentPlayerId(currentPlayer.id)
+        setGameState(data)
+      }
+    })
+    
+    socketInstance.on("game_started", (data) => {
+      console.log("Game started event received:", data)
+      // Find current player by NAME, not by ID
+      const currentPlayer = data.players.find((p: Player) => p.name === storedUsername)
+      if (currentPlayer) {
+        setCurrentPlayerId(currentPlayer.id)
+        setGameState(data)
+      } else {
+        console.error("Could not find current player in game data")
+      }
+    })
+  } catch (error) {
+    console.error("Error setting up socket:", error)
+  }
+}, [lobbyCode, router, username, currentPlayerId])
 
   // If game state is not loaded yet, show loading
-  if (!gameState) {
+  if (isLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
         <div className="text-white text-xl mb-4">Loading game...</div>
@@ -283,16 +192,19 @@ export default function GamePage() {
         <div className="text-white text-sm mb-6">
           {socketConnected ? "Connected to server" : "Connecting to server..."}
         </div>
+        <Button onClick={() => router.push(`/lobby/${lobbyCode}`)}>Return to Lobby</Button>
       </div>
     )
   }
 
-  const currentPlayer = gameState.players.find((p) => p.id === currentPlayerId)
-  const isCurrentPlayerTurn = gameState.currentTurn === currentPlayerId
+  // Assert gameState is non-null since we've passed the loading check
+  const gameStateNonNull = gameState!
+  const currentPlayer = gameStateNonNull.players.find((p) => p.id === currentPlayerId)
+  const isCurrentPlayerTurn = gameStateNonNull.currentTurn === currentPlayerId
 
   // Get team scores
-  const teamAScore = gameState.declaredSets.filter((set) => set.team === "A").length
-  const teamBScore = gameState.declaredSets.filter((set) => set.team === "B").length
+  const teamAScore = gameStateNonNull.declaredSets.filter((set) => set.team === "A").length
+  const teamBScore = gameStateNonNull.declaredSets.filter((set) => set.team === "B").length
 
   const handlePlayerClick = (player: Player) => {
     if (!isCurrentPlayerTurn) {
@@ -303,36 +215,37 @@ export default function GamePage() {
       })
       return
     }
+    
     if (player.id === currentPlayerId) return
     if (player.cards === 0 || (Array.isArray(player.cards) && player.cards.length === 0)) return
     if (currentPlayer && player.team === currentPlayer.team) return
-
+  
     setSelectedPlayer(player)
     setAskDialogOpen(true)
   }
 
-  // Replace the handleAskCard function with this improved version
   const handleAskCard = (card: GameCard) => {
-    if (!isCurrentPlayerTurn) {
-      toast({
-        title: "Not your turn",
-        description: "Please wait for your turn to ask for cards",
-        variant: "destructive",
-      })
-      return
-    }
-
     setAskDialogOpen(false)
+
     if (!selectedPlayer) return
 
     const socket = getSocket()
     if (socket && socket.connected) {
+      console.log("Asking for card:", card.id, "from player:", selectedPlayer.id)
       socket.emit("ask_card", {
         lobbyCode,
         playerId: selectedPlayer.id,
         cardId: card.id,
       })
+    } else {
+      toast({
+        title: "Connection error",
+        description: "Not connected to the game server",
+        variant: "destructive",
+      })
     }
+
+    setSelectedPlayer(null)
   }
 
   const handleDeclareSet = (setName: string, declarations: Record<string, string[]>) => {
@@ -340,10 +253,17 @@ export default function GamePage() {
 
     const socket = getSocket()
     if (socket && socket.connected) {
+      console.log("Declaring set:", setName, "with declarations:", declarations)
       socket.emit("declare_set", {
         lobbyCode,
         setName,
         declarations,
+      })
+    } else {
+      toast({
+        title: "Connection error",
+        description: "Not connected to the game server",
+        variant: "destructive",
       })
     }
   }
@@ -354,22 +274,35 @@ export default function GamePage() {
       socket.emit("play_again", { lobbyCode })
     }
     setGameOverDialogOpen(false)
+    router.push(`/lobby/${lobbyCode}`)
   }
 
-  // Replace the repositionPlayers function with this improved version
-  const repositionPlayers = () => {
-    if (!gameState || !currentPlayer) return gameState?.players || [];
+  // Reposition players so current player is at the bottom (position 0)
+  // Fix the repositionPlayers function
+const repositionPlayers = () => {
+  if (!gameState || !currentPlayerId) return [];
+  
+  // Get the current player from the state
+  const currentPlayer = gameState.players.find(p => p.id === currentPlayerId);
+  if (!currentPlayer) return gameState.players;
+  
+  // Get all players in the game
+  const allPlayers = [...gameState.players];
+  
+  // Find the index of the current player
+  const currentPlayerIndex = allPlayers.findIndex(p => p.id === currentPlayerId);
+  
+  // If player not found, return all players in original order
+  if (currentPlayerIndex === -1) return allPlayers;
+  
+  // Rotate the array so current player is at index 0
+  return [
+    ...allPlayers.slice(currentPlayerIndex),
+    ...allPlayers.slice(0, currentPlayerIndex)
+  ];
+};
 
-    // Use the seatingOrder from the server
-    const seatingOrderIds: string[] = (gameState as any).seatingOrder || gameState.players.map(p => p.id);
-    const orderedPlayers = seatingOrderIds.map(id => gameState.players.find(p => p.id === id)).filter(Boolean) as Player[];
-
-    // Rotate so current player is at index 0
-    const myIdx = orderedPlayers.findIndex(p => p.id === currentPlayer.id);
-    return rotateArray(orderedPlayers, myIdx);
-  };
-
-  const positionedPlayers = repositionPlayers();
+  const positionedPlayers = repositionPlayers()
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex flex-col">
@@ -377,6 +310,13 @@ export default function GamePage() {
       <div className="p-4 flex justify-between items-center bg-slate-800">
         <div className="flex items-center space-x-4">
           <div className="text-sm">Lobby: {lobbyCode}</div>
+          <div className="text-sm">
+            Turn:{" "}
+            <span className={`font-bold ${isCurrentPlayerTurn ? "text-green-400" : ""}`}>
+              {gameStateNonNull.players.find((p) => p.id === gameStateNonNull.currentTurn)?.name}
+              {isCurrentPlayerTurn ? " (Your Turn)" : ""}
+            </span>
+          </div>
         </div>
         <div className="flex items-center space-x-4">
           <div className="flex items-center">
@@ -398,7 +338,7 @@ export default function GamePage() {
             {/* Team A sets (left side) */}
             <div className="w-1/2 h-full flex items-center justify-center p-4">
               <div className="grid grid-cols-3 gap-2">
-                {gameState.declaredSets
+                {gameStateNonNull.declaredSets
                   .filter((set) => set.team === "A")
                   .map((declaredSet, index) => (
                     <div key={`set-a-${index}`} className="text-center">
@@ -414,7 +354,7 @@ export default function GamePage() {
             {/* Team B sets (right side) */}
             <div className="w-1/2 h-full flex items-center justify-center p-4">
               <div className="grid grid-cols-3 gap-2">
-                {gameState.declaredSets
+                {gameStateNonNull.declaredSets
                   .filter((set) => set.team === "B")
                   .map((declaredSet, index) => (
                     <div key={`set-b-${index}`} className="text-center">
@@ -437,21 +377,18 @@ export default function GamePage() {
               player={player}
               position={index}
               isCurrentPlayer={player.id === currentPlayerId}
-              isCurrentTurn={player.id === gameState.currentTurn}
+              isCurrentTurn={player.id === gameStateNonNull.currentTurn}
               onClick={() => handlePlayerClick(player)}
             />
           ))}
         </div>
       </div>
 
-      {/* Current player's hand and turn display */}
+      {/* Current player's hand */}
       <div className="p-4 bg-slate-800">
         <div className="flex justify-between items-center mb-2">
           <div className="text-sm">
             Your Cards ({Array.isArray(currentPlayer?.cards) ? currentPlayer.cards.length : 0})
-          </div>
-          <div className="text-sm font-bold">
-            Current Turn: {gameState.players.find((p) => p.id === gameState.currentTurn)?.name}
           </div>
           {isCurrentPlayerTurn && (
             <Button
@@ -490,7 +427,7 @@ export default function GamePage() {
         open={declareDialogOpen}
         onClose={() => setDeclareDialogOpen(false)}
         currentPlayer={currentPlayer}
-        teammates={gameState.players.filter((p) => p.team === currentPlayer?.team && p.id !== currentPlayerId)}
+        teammates={gameStateNonNull.players.filter((p) => p.team === currentPlayer?.team && p.id !== currentPlayerId)}
         onDeclare={handleDeclareSet}
       />
 
@@ -498,7 +435,7 @@ export default function GamePage() {
       <GameOverDialog
         open={gameOverDialogOpen}
         onClose={() => setGameOverDialogOpen(false)}
-        winningTeam={gameState.winningTeam || ""}
+        winningTeam={gameStateNonNull.winningTeam || ""}
         currentPlayerTeam={currentPlayer?.team || ""}
         onPlayAgain={handlePlayAgain}
       />
